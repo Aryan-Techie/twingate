@@ -40,6 +40,21 @@
   .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
   .how { margin-top: 26px; font-size: 13px; color: var(--muted); line-height: 1.5; }
   .how b { color: var(--text); }
+  .teach { margin-top: 16px; padding: 14px; }
+  .th { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .tt { font-weight: 700; font-size: 17px; margin-top: 2px; }
+  .tinfo { color: var(--muted); font-size: 13px; margin-top: 8px; line-height: 1.4; }
+  .tbtn { background: var(--panel-2); color: var(--text); border: 1px solid var(--line) !important; border-radius: 10px; padding: 9px 12px; font-weight: 600; font-size: 14px; white-space: nowrap; }
+  .tbtn.on { background: var(--sim); color: #041016; }
+  .sl { display: grid; grid-template-columns: 92px 1fr 44px; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+  .sl input { width: 100%; accent-color: var(--sim); padding: 0; }
+  .sl .v { font-family: var(--mono); font-size: 12px; text-align: right; color: var(--sim); }
+  .krow { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+  .krow input { flex: 1; font-family: var(--mono); font-size: 15px; }
+  .kc { color: var(--muted); font-size: 13px; margin-left: auto; }
+  .tsave { background: var(--live); color: #120c00; font-weight: 700; border-radius: 10px; padding: 12px 14px; }
+  .mypts { margin-top: 12px; font-size: 13px; color: var(--muted); text-align: center; }
+  .mypts b { color: var(--accent); font-family: var(--mono); }
   .estopbar { display: none; margin-top: 16px; background: #c9142c; color: #fff; font-weight: 700; padding: 12px 14px; border-radius: 12px; text-align: center; }
   .vote { margin-top: 18px; display: grid; gap: 12px; }
   .vcard { padding: 14px; border: 1px solid color-mix(in srgb, var(--live) 55%, transparent); background: color-mix(in srgb, var(--live) 7%, var(--panel)); }
@@ -75,6 +90,16 @@
     <div class="chips" id="chips"></div>
   </section>
 
+  <section class="panel card teach" id="teach">
+    <div class="th"><div><span class="label">Teach mode</span><div class="tt">Move the robot with your fingers</div></div><button class="tbtn" id="tTake">Take control</button></div>
+    <div class="tinfo" id="tInfo">Drag the sliders and the digital twin on the big screen moves live. Add keyframes, name your move, and the robot learns it. It still goes through the safety gate before the real robot.</div>
+    <div id="tBody" style="display:none">
+      <div id="sliders"></div>
+      <div class="krow"><button class="tbtn" id="tKey">＋ Keyframe</button><button class="tbtn" id="tClear">Clear</button><span class="kc" id="tCount">0 keyframes</span></div>
+      <div class="krow"><input id="tName" maxlength="24" placeholder="name_your_move" /><button class="tsave" id="tSave">Teach robot</button></div>
+    </div>
+  </section>
+  <div class="mypts" id="mypts"></div>
   <div class="estopbar" id="estopbar">E-STOP engaged · robot halted by operator</div>
   <section class="vote" id="vote"></section>
   <section class="mine" id="mine"></section>
@@ -215,7 +240,7 @@ $("send").onclick = async () => {
   if (!prompt) return toast("Tell the robot something first");
   store.set("tg_name", author);
   $("send").disabled = true;
-  const { data, error } = await sb.from("missions").insert({ prompt, author }).select().single();
+  const { data, error } = await sb.from("missions").insert({ prompt, author, client_id: voter }).select().single();
   $("send").disabled = false;
   if (error) return toast("Could not send: " + error.message);
   mine = [data.id, ...mine].slice(0, 10); store.set("tg_missions", mine);
@@ -236,7 +261,81 @@ else {
     rec.start();
   };
 }
-load();
+// ---------- robot replies out loud on your phone ----------
+function speak(t) { try { if (!t || !window.speechSynthesis) return; speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(t)); } catch {} }
+
+// ---------- teach mode ----------
+const ALIASES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"];
+let joints = [], pose = {}, keyframes = [], owning = false, teachRow = null, sendTimer = null, lastKf = null;
+fetch("so101.json").then((r) => r.json()).then((d) => {
+  joints = d.joints.map((j) => ({ name: j.name, lo: Math.round(j.limits.lower * 57.2958), hi: Math.round(j.limits.upper * 57.2958) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  joints.forEach((j) => { pose[j.name] = Math.max(j.lo, Math.min(j.hi, 0)); });
+  $("sliders").innerHTML = joints.map((j, i) => `<label class="sl"><span>${ALIASES[i] || j.name}</span>
+    <input type="range" min="${j.lo}" max="${j.hi}" step="1" value="${pose[j.name]}" data-j="${j.name}"><span class="v" id="v${j.name}">${pose[j.name]}°</span></label>`).join("");
+});
+$("sliders").addEventListener("input", (e) => {
+  const j = e.target.dataset.j; if (!j) return;
+  pose[j] = +e.target.value; $("v" + j).textContent = pose[j] + "°";
+  if (!sendTimer) sendTimer = setTimeout(pushPose, 110);
+});
+async function pushPose() {
+  sendTimer = null; if (!owning) return;
+  await sb.from("teach").update({ joints_deg: pose, owner: voter, owner_name: $("name").value.trim() || "anon", updated_at: new Date().toISOString() }).eq("id", 1);
+}
+function teachBusy() { return teachRow && teachRow.owner && teachRow.owner !== voter && Date.now() - new Date(teachRow.updated_at).getTime() < 20000; }
+$("tTake").onclick = async () => {
+  if (owning) { owning = false; await sb.from("teach").update({ owner: null, owner_name: null, updated_at: new Date().toISOString() }).eq("id", 1); renderTeach(); return; }
+  if (teachBusy()) return toast(`${teachRow.owner_name || "Someone"} is teaching right now. Try in a few seconds.`);
+  owning = true; renderTeach(); pushPose();
+};
+$("tKey").onclick = () => {
+  const prev = lastKf || Object.fromEntries(joints.map((j) => [j.name, 0]));
+  const delta = Math.max(...joints.map((j) => Math.abs(pose[j.name] - (prev[j.name] ?? 0))));
+  keyframes.push({ targets_deg: { ...pose }, duration: Math.max(0.6, Math.round((delta / 70) * 10) / 10) });
+  lastKf = { ...pose }; $("tCount").textContent = `${keyframes.length} keyframe${keyframes.length === 1 ? "" : "s"}`;
+  if (navigator.vibrate) navigator.vibrate(30);
+};
+$("tClear").onclick = () => { keyframes = []; lastKf = null; $("tCount").textContent = "0 keyframes"; };
+$("tSave").onclick = async () => {
+  const name = $("tName").value.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 24);
+  if (!keyframes.length) return toast("Add at least one keyframe");
+  if (name.length < 2) return toast("Give your move a name");
+  const author = $("name").value.trim() || "anon"; store.set("tg_name", author);
+  const { error } = await sb.from("teach_submissions").insert({ author, name, keyframes });
+  if (error) return toast("Could not teach: " + error.message);
+  toast(`Teaching "${name}"… watch the big screen`); speak(`Teaching ${name.replace(/_/g, " ")}`);
+  keyframes = []; lastKf = null; $("tCount").textContent = "0 keyframes"; $("tName").value = "";
+  owning = false; await sb.from("teach").update({ owner: null, owner_name: null, updated_at: new Date().toISOString() }).eq("id", 1); renderTeach();
+};
+function renderTeach() {
+  $("tBody").style.display = owning ? "block" : "none";
+  $("tTake").classList.toggle("on", owning);
+  $("tTake").textContent = owning ? "Release" : (teachBusy() ? `${teachRow.owner_name || "Someone"} is teaching` : "Take control");
+}
+sb.from("teach").select("*").eq("id", 1).single().then(({ data }) => { teachRow = data; renderTeach(); });
+setInterval(() => { if (owning) pushPose(); else renderTeach(); }, 5000);
+
+// ---------- leaderboard (your points) ----------
+async function refreshPoints() {
+  const me = ($("name").value.trim() || store.get("tg_name", "")).trim(); if (!me) { $("mypts").textContent = ""; return; }
+  const { data } = await sb.from("leaderboard").select("author,points").limit(50);
+  const i = (data || []).findIndex((r) => r.author === me);
+  $("mypts").innerHTML = i >= 0 ? `You: <b>${data[i].points} pts</b> · rank <b>#${i + 1}</b> of ${data.length} builders` : "Send a mission to get on the leaderboard";
+}
+setInterval(refreshPoints, 8000);
+
+sb.channel("phone2")
+  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "teach" }, (p) => { teachRow = p.new; if (owning && p.new.owner !== voter) { owning = false; } renderTeach(); })
+  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "missions" }, (p) => {
+    const m = p.new; if (!m || !mine.includes(m.id)) return;
+    if (m.status === "awaiting_approval") speak(m.summary || "Your plan passed the twin rehearsal.");
+    if (m.status === "done") speak("Done. Your mission ran on the real robot.");
+    if (m.status === "blocked") speak("The safety gate blocked it. The real robot never moved.");
+    refreshPoints();
+  })
+  .subscribe();
+load(); refreshPoints();
 </script>
 </body>
 </html>

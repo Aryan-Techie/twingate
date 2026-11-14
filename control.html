@@ -66,6 +66,14 @@
   .stage .legend span::before { content: ""; display: inline-block; width: 18px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; background: currentColor; }
   .stage .legend .s { color: var(--sim); } .stage .legend .l { color: var(--live); }
   .stage .mode { position: absolute; right: 14px; top: 12px; }
+  .teachbadge { display: none; position: absolute; left: 14px; bottom: 12px; background: var(--sim); color: #041016; font-weight: 700; font-size: 14px; padding: 7px 12px; border-radius: 999px; box-shadow: 0 0 24px #39d0ff66; }
+  .teachbadge.on { display: block; animation: pulse 1.4s infinite; }
+  .lb { flex: none; }
+  .lbrow { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; padding: 6px 14px; font-size: 14px; align-items: center; }
+  .lbrow .r { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+  .lbrow .pts { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+  .lbrow .sub { color: var(--muted); font-size: 11px; }
+  .lbrow:first-child .r { color: #ffd23f; }
   .mission { padding: 14px 16px; }
   .tbtn { color: var(--text); cursor: pointer; }
   .tbtn:hover { border-color: var(--sim); color: var(--sim); }
@@ -130,6 +138,7 @@
         <div class="url" id="url"></div>
         <div class="url">robot eyes: <span id="eyesUrl"></span></div>
       </section>
+      <section class="panel lb"><div class="sec-h"><span class="label">Top builders</span><span class="pill mono" id="lbCount">0</span></div><div id="lb"></div></section>
       <section class="panel list" id="queue"></section>
     </div>
 
@@ -139,6 +148,7 @@
         <canvas id="cv"></canvas>
         <div id="three"></div>
         <div class="legend"><span class="s">Digital twin (sim)</span><span class="l">Real robot</span></div>
+        <div class="teachbadge" id="teachBadge"></div>
         <div class="mode"><span class="pill"><span class="dot" id="worker"></span><span id="workerTxt">worker offline</span></span></div>
       </section>
       <section class="panel eyes">
@@ -481,6 +491,34 @@ async function decide(status) {
   if (!m || m.status !== "awaiting_approval") return;
   await rpc("operator_decide", { p_mission: m.id, p_status: status });
 }
+// ---------- teach mode + leaderboard ----------
+let teachUntil = 0;
+function onTeach(row) {
+  if (!row) return;
+  const live = row.owner && Date.now() - new Date(row.updated_at).getTime() < 15000;
+  $("teachBadge").classList.toggle("on", !!live);
+  $("teachBadge").textContent = live ? `TEACH MODE · ${row.owner_name || "someone"} is moving the twin by hand` : "";
+  if (live && row.joints_deg && Object.keys(row.joints_deg).length) setPose("sim", row.joints_deg);
+}
+setInterval(() => sb.from("teach").select("*").eq("id", 1).single().then(({ data }) => onTeach(data)), 4000);
+let lbTimer = null;
+async function refreshLb() {
+  lbTimer = null;
+  const { data } = await sb.from("leaderboard").select("*").limit(5);
+  const rows = data || [];
+  $("lbCount").textContent = rows.length;
+  $("lb").innerHTML = rows.length ? rows.map((r, i) => `<div class="lbrow"><span class="r">${i + 1}</span>
+    <span>${esc(r.author)} <span class="sub">· ${r.passed} passed · ${r.real_runs} real · ${r.skills} taught</span></span><span class="pts">${r.points}</span></div>`).join("")
+    : `<div class="empty">Send a mission to get on the board.</div>`;
+}
+function bumpLb() { if (!lbTimer) lbTimer = setTimeout(refreshLb, 1200); }
+refreshLb();
+sb.channel("teach")
+  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "teach" }, (p) => onTeach(p.new))
+  .on("postgres_changes", { event: "*", schema: "public", table: "missions" }, bumpLb)
+  .on("postgres_changes", { event: "*", schema: "public", table: "skills" }, bumpLb)
+  .subscribe();
+
 // ---------- black box replay + dataset export ----------
 let replaying = false;
 $("replay").onclick = async () => {
