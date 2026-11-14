@@ -122,6 +122,7 @@
     <div class="motto">AI <b class="h">proposes</b> · digital twin <b class="s">rehearses</b> · real robot <b class="l">performs</b></div>
     <button class="pill" id="voice" title="Robot speaks summaries">🔈 voice off</button>
     <button id="estop" title="Emergency stop (Space)">E-STOP</button>
+    <span class="pill mono" id="rt" title="Supabase Realtime round trip (broadcast)">Realtime – ms</span>
     <div class="stats">
       <div class="panel stat"><div class="label">Missions</div><div class="v" id="sMissions">0</div></div>
       <div class="panel stat"><div class="label">Moves rehearsed</div><div class="v" id="sSteps">0</div></div>
@@ -491,6 +492,11 @@ async function decide(status) {
   if (!m || m.status !== "awaiting_approval") return;
   await rpc("operator_decide", { p_mission: m.id, p_status: status });
 }
+// ---------- Supabase Realtime latency ----------
+const ping = sb.channel("ping", { config: { broadcast: { self: true } } });
+ping.on("broadcast", { event: "p" }, ({ payload }) => { $("rt").textContent = `Realtime ${Math.round(performance.now() - payload.t)} ms`; })
+  .subscribe((st) => { if (st === "SUBSCRIBED") setInterval(() => ping.send({ type: "broadcast", event: "p", payload: { t: performance.now() } }), 3000); });
+
 // ---------- teach mode + leaderboard ----------
 let teachUntil = 0;
 function onTeach(row) {
