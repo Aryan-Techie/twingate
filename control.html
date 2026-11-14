@@ -34,7 +34,21 @@
   .qrow.focus { background: var(--panel-2); }
   .qrow .who { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .qrow .what { font-size: 14px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .stage { position: relative; flex: 1.25; min-height: 0; overflow: hidden; }
+  .stagewrap { flex: 1.25; min-height: 0; display: grid; grid-template-columns: 1fr 330px; gap: 14px; }
+  .stage { position: relative; min-height: 0; overflow: hidden; }
+  .eyes { padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; }
+  .eyes-h { display: flex; justify-content: space-between; align-items: center; }
+  #sentryBtn { color: var(--text); padding: 5px 10px; }
+  #sentryBtn.on { background: var(--bad); color: #fff; border-color: var(--bad); }
+  .eyes-img { position: relative; border-radius: 10px; overflow: hidden; background: #000; aspect-ratio: 4 / 3; flex: none; border: 1px solid var(--line); }
+  .eyes-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .eyes-none { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; color: var(--muted); font-size: 13px; }
+  .badge { position: absolute; left: 8px; top: 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: rgba(0,0,0,.7); color: var(--muted); }
+  .badge.ok { color: #04140a; background: var(--ok); } .badge.alert { color: #fff; background: var(--bad); animation: pulse 1s infinite; }
+  .eyes-title { font-weight: 700; font-size: 16px; line-height: 1.25; }
+  .eyes-detail { color: var(--muted); font-size: 13px; line-height: 1.4; overflow: hidden; flex: 1; min-height: 0; }
+  #rule { width: 100%; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 9px 10px; font: inherit; font-size: 13px; outline: none; }
+  #rule:focus { border-color: var(--sim); }
   .stage canvas { width: 100%; height: 100%; display: block; }
   .stage .legend { position: absolute; left: 14px; top: 12px; display: flex; gap: 14px; font-size: 13px; font-weight: 600; }
   .stage .legend span::before { content: ""; display: inline-block; width: 18px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; background: currentColor; }
@@ -104,11 +118,20 @@
     </div>
 
     <div class="col">
+      <div class="stagewrap">
       <section class="panel stage">
         <canvas id="cv"></canvas>
         <div class="legend"><span class="s">Digital twin (sim)</span><span class="l">Real robot</span></div>
         <div class="mode"><span class="pill"><span class="dot" id="worker"></span><span id="workerTxt">worker offline</span></span></div>
       </section>
+      <section class="panel eyes">
+        <div class="eyes-h"><span class="label">Sentry · robot eyes</span><button class="pill" id="sentryBtn">sentry off</button></div>
+        <div class="eyes-img"><img id="eyesImg" alt="robot eyes" /><div class="eyes-none" id="eyesNone">Open eyes.html on a phone pointed at the robot</div><span class="badge" id="eyesBadge">idle</span></div>
+        <div class="eyes-title" id="eyesTitle">Sentry is off</div>
+        <div class="eyes-detail" id="eyesDetail">Turn it on and the robot judges every frame against your rule. Alerts trigger a gated robot reaction.</div>
+        <input id="rule" maxlength="300" placeholder="Watch rule, e.g. alert if a bag is left unattended" />
+      </section>
+      </div>
       <section class="panel mission">
         <div class="meta"><span class="label" id="mLabel">No mission yet</span><span class="pill" id="mStatus">idle</span></div>
         <div class="p" id="mPrompt">Waiting for the crowd…</div>
@@ -372,6 +395,48 @@ sb.channel("control")
   })
   .subscribe();
 
+// ---------- sentry / robot eyes ----------
+let watch = null, lastReport = null;
+const eyesBase = `${TWINGATE.SUPABASE_URL}/storage/v1/object/public/frames/eyes/latest.jpg`;
+$("eyesImg").onload = () => { $("eyesNone").style.display = "none"; };
+$("eyesImg").onerror = () => { $("eyesNone").style.display = "grid"; };
+setInterval(() => { $("eyesImg").src = `${eyesBase}?t=${Date.now()}`; }, 2000);
+function renderWatch() {
+  if (!watch) return;
+  $("sentryBtn").classList.toggle("on", watch.enabled);
+  $("sentryBtn").textContent = watch.enabled ? "● sentry on" : "sentry off";
+  if (document.activeElement !== $("rule")) $("rule").value = watch.rule;
+  if (!watch.enabled && !lastReport) { $("eyesTitle").textContent = "Sentry is off"; }
+}
+function renderReport() {
+  const r = lastReport; if (!r) return;
+  const b = $("eyesBadge");
+  b.className = `badge ${r.alert ? "alert" : "ok"}`; b.textContent = r.alert ? "ALERT" : "OK";
+  $("eyesTitle").textContent = r.title || "";
+  $("eyesDetail").textContent = (r.detail || "") + (r.mission_id ? `  → robot reaction queued as mission #${r.mission_id}` : "");
+}
+$("sentryBtn").onclick = async () => {
+  if (!watch) return;
+  const { error } = await sb.from("watch").update({ enabled: !watch.enabled, updated_at: new Date().toISOString() }).eq("id", 1);
+  if (error) alert(error.message);
+};
+$("rule").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter") return;
+  e.stopPropagation(); e.preventDefault();
+  const rule = $("rule").value.trim(); if (rule.length < 3) return;
+  const { error } = await sb.from("watch").update({ rule, updated_at: new Date().toISOString() }).eq("id", 1);
+  if (error) alert(error.message); else $("rule").blur();
+});
+sb.from("watch").select("*").eq("id", 1).single().then(({ data }) => { watch = data; renderWatch(); });
+sb.from("reports").select("*").order("id", { ascending: false }).limit(1).then(({ data }) => { lastReport = (data || [])[0] || null; renderReport(); });
+sb.channel("sentry")
+  .on("postgres_changes", { event: "*", schema: "public", table: "watch" }, (p) => { watch = p.new; renderWatch(); })
+  .on("postgres_changes", { event: "INSERT", schema: "public", table: "reports" }, (p) => {
+    lastReport = p.new; renderReport();
+    if (p.new.alert) say(`Alert. ${p.new.title}.`);
+  })
+  .subscribe();
+
 async function decide(status) {
   const m = missions.get(focusId);
   if (!m || m.status !== "awaiting_approval") return;
@@ -381,6 +446,7 @@ async function decide(status) {
 $("promote").onclick = () => decide("approved");
 $("reject").onclick = () => decide("rejected");
 addEventListener("keydown", (e) => {
+  if (e.target && e.target.id === "rule") return;
   if (e.key === "Enter") decide("approved");
   if (e.key === "x" || e.key === "X") decide("rejected");
 });
