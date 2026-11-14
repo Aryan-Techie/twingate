@@ -19,6 +19,15 @@
   .stat .v { font-size: 24px; font-weight: 700; font-family: var(--mono); line-height: 1.1; }
   .stat.caught .v { color: var(--bad); } .stat.skills .v { color: var(--accent); }
   #voice { color: var(--text); padding: 8px 12px; }
+  #estop { font-family: var(--mono); font-weight: 700; letter-spacing: .08em; color: #fff; background: #c9142c; border-radius: 999px; padding: 9px 18px; box-shadow: 0 0 0 3px #3a0710, 0 0 22px #ff1f3d55; }
+  #estop.on { background: #fff; color: #c9142c; animation: pulse .8s infinite; }
+  .estop-banner { display: none; position: fixed; left: 50%; top: 84px; transform: translateX(-50%); z-index: 10; background: #c9142c; color: #fff; font-weight: 700; font-size: 20px; letter-spacing: .04em; padding: 12px 26px; border-radius: 12px; box-shadow: 0 10px 40px #000a; }
+  body.estopped .estop-banner { display: block; }
+  body.estopped .stage { box-shadow: inset 0 0 0 3px #c9142c; }
+  .votes { margin-top: 12px; display: flex; align-items: center; gap: 10px; font-size: 14px; }
+  .votes .bar { flex: 1; height: 8px; border-radius: 6px; background: var(--panel-2); overflow: hidden; display: flex; }
+  .votes .y { background: var(--ok); } .votes .n { background: var(--bad); }
+  .votes b { font-family: var(--mono); }
   #voice.on { color: #041016; background: var(--sim); }
   .grid { display: grid; grid-template-columns: 290px 1fr 360px; gap: 14px; min-height: 0; }
   .col { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
@@ -40,21 +49,26 @@
   .eyes-h { display: flex; justify-content: space-between; align-items: center; }
   #sentryBtn { color: var(--text); padding: 5px 10px; }
   #sentryBtn.on { background: var(--bad); color: #fff; border-color: var(--bad); }
-  .eyes-img { position: relative; border-radius: 10px; overflow: hidden; background: #000; aspect-ratio: 4 / 3; flex: none; border: 1px solid var(--line); }
-  .eyes-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .eyes-img { position: relative; border-radius: 10px; overflow: hidden; background: #000; flex: 1; min-height: 90px; border: 1px solid var(--line); }
+  .eyes-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
   .eyes-none { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; color: var(--muted); font-size: 13px; }
   .badge { position: absolute; left: 8px; top: 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: rgba(0,0,0,.7); color: var(--muted); }
   .badge.ok { color: #04140a; background: var(--ok); } .badge.alert { color: #fff; background: var(--bad); animation: pulse 1s infinite; }
   .eyes-title { font-weight: 700; font-size: 16px; line-height: 1.25; }
-  .eyes-detail { color: var(--muted); font-size: 13px; line-height: 1.4; overflow: hidden; flex: 1; min-height: 0; }
+  .eyes-detail { color: var(--muted); font-size: 12.5px; line-height: 1.35; overflow: hidden; max-height: 3.2em; flex: none; }
   #rule { width: 100%; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 9px 10px; font: inherit; font-size: 13px; outline: none; }
   #rule:focus { border-color: var(--sim); }
   .stage canvas { width: 100%; height: 100%; display: block; }
+  #three { position: absolute; inset: 0; }
+  #three canvas { width: 100% !important; height: 100% !important; }
+  .stage.has3d #cv { display: none; }
   .stage .legend { position: absolute; left: 14px; top: 12px; display: flex; gap: 14px; font-size: 13px; font-weight: 600; }
   .stage .legend span::before { content: ""; display: inline-block; width: 18px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; background: currentColor; }
   .stage .legend .s { color: var(--sim); } .stage .legend .l { color: var(--live); }
   .stage .mode { position: absolute; right: 14px; top: 12px; }
   .mission { padding: 14px 16px; }
+  .tbtn { color: var(--text); cursor: pointer; }
+  .tbtn:hover { border-color: var(--sim); color: var(--sim); }
   .mission .p { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; margin-top: 4px; }
   .mission .meta { display: flex; justify-content: space-between; align-items: center; }
   .mission .sum { margin-top: 6px; color: var(--muted); font-size: 15px; }
@@ -93,11 +107,13 @@
 </style>
 </head>
 <body>
+<div class="estop-banner">E-STOP ENGAGED · real robot halted · press E-STOP again to release</div>
 <div class="app">
   <div class="top">
     <div class="brand"><span class="logo"></span>TwinGate</div>
     <div class="motto">AI <b class="h">proposes</b> · digital twin <b class="s">rehearses</b> · real robot <b class="l">performs</b></div>
     <button class="pill" id="voice" title="Robot speaks summaries">🔈 voice off</button>
+    <button id="estop" title="Emergency stop (Space)">E-STOP</button>
     <div class="stats">
       <div class="panel stat"><div class="label">Missions</div><div class="v" id="sMissions">0</div></div>
       <div class="panel stat"><div class="label">Moves rehearsed</div><div class="v" id="sSteps">0</div></div>
@@ -121,6 +137,7 @@
       <div class="stagewrap">
       <section class="panel stage">
         <canvas id="cv"></canvas>
+        <div id="three"></div>
         <div class="legend"><span class="s">Digital twin (sim)</span><span class="l">Real robot</span></div>
         <div class="mode"><span class="pill"><span class="dot" id="worker"></span><span id="workerTxt">worker offline</span></span></div>
       </section>
@@ -133,7 +150,7 @@
       </section>
       </div>
       <section class="panel mission">
-        <div class="meta"><span class="label" id="mLabel">No mission yet</span><span class="pill" id="mStatus">idle</span></div>
+        <div class="meta"><span class="label" id="mLabel">No mission yet</span><span style="display:flex;gap:8px"><button class="pill tbtn" id="replay" title="Replay this mission from the Supabase black box">▶ black box replay</button><button class="pill tbtn" id="export" title="Download every mission as a language-to-motion dataset">⇩ dataset</button><span class="pill" id="mStatus">idle</span></span></div>
         <div class="p" id="mPrompt">Waiting for the crowd…</div>
         <div class="sum" id="mSummary"></div>
       </section>
@@ -153,6 +170,7 @@
         </div>
         <ul class="checks" id="checks"></ul>
         <div id="caught"></div>
+        <div class="votes" id="votes" style="display:none"><span>Crowd vote</span><div class="bar"><div class="y" id="vy"></div><div class="n" id="vn"></div></div><b id="vtxt">0/0</b></div>
         <div class="btns">
           <button class="promote" id="promote" disabled>Promote to real robot<span class="kbd">⏎</span></button>
           <button class="reject" id="reject" disabled>Reject<span class="kbd">X</span></button>
@@ -169,7 +187,13 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script src="config.js"></script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module" src="twin3d.js"></script>
 <script>
+addEventListener("twin3d-ready", () => {
+  document.querySelector(".stage").classList.add("has3d");
+  for (const [t, j] of Object.entries(lastPose3d)) window.Twin3D.setPose(t, j);
+});
 const sb = supabase.createClient(TWINGATE.SUPABASE_URL, TWINGATE.SUPABASE_ANON_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -198,7 +222,10 @@ let lastWorkerSeen = 0;
 
 // ---------- twin vs real arm view ----------
 const pose = { sim: { cur: [], goal: [] }, live: { cur: [], goal: [] } };
+const lastPose3d = {};
 function setPose(target, jointsDeg) {
+  lastPose3d[target] = jointsDeg;
+  window.Twin3D?.setPose(target, jointsDeg);
   const vals = Object.values(jointsDeg);
   pose[target].goal = vals;
   if (!pose[target].cur.length) pose[target].cur = vals.slice();
@@ -330,7 +357,7 @@ function renderSkills() {
     <div class="d mono">${s.uses}×</div></div>`).join("");
   lastSkillIds = new Set(list.map((s) => s.id));
 }
-function renderAll() { pickFocus(); renderStats(); renderQueue(); renderMission(); renderTrace(); renderGate(); renderSkills(); }
+function renderAll() { pickFocus(); renderStats(); renderQueue(); renderMission(); renderTrace(); renderGate(); renderSkills(); if (typeof renderVotes === "function") renderVotes(); }
 
 // ---------- data ----------
 function addEvent(e) {
@@ -377,7 +404,8 @@ sb.channel("control")
     const st = p.new?.status;
     if (st && st !== prev) {
       if (st === "awaiting_approval") say(`${p.new.summary || "Plan ready."} Rehearsal passed. Waiting for the operator.`);
-      else if (st === "executing") say("Promoted. Running on the real robot.");
+      else if (st === "approved") say("Approved. Sending to the real robot.");
+      else if (st === "executing") say("Running on the real robot.");
       else if (st === "done") say("Done.");
       else if (st === "blocked") say("Blocked by the safety gate. The real robot never moved.");
       else if (st === "rejected") say(p.new.summary || "Request declined.");
@@ -437,18 +465,93 @@ sb.channel("sentry")
   })
   .subscribe();
 
+function pin() {
+  let p = null; try { p = localStorage.getItem("tg_pin"); } catch {}
+  if (!p) { p = prompt("Operator PIN"); if (p) try { localStorage.setItem("tg_pin", p); } catch {} }
+  return p;
+}
+async function rpc(fn, args) {
+  const p = pin(); if (!p) return false;
+  const { error } = await sb.rpc(fn, { ...args, p_pin: p });
+  if (error) { if (/pin/.test(error.message)) { try { localStorage.removeItem("tg_pin"); } catch {} } alert(error.message); return false; }
+  return true;
+}
 async function decide(status) {
   const m = missions.get(focusId);
   if (!m || m.status !== "awaiting_approval") return;
-  const { error } = await sb.from("missions").update({ status }).eq("id", m.id);
-  if (error) alert(error.message);
+  await rpc("operator_decide", { p_mission: m.id, p_status: status });
 }
+// ---------- black box replay + dataset export ----------
+let replaying = false;
+$("replay").onclick = async () => {
+  if (replaying || !focusId) return;
+  const { data } = await sb.from("events").select("created_at,data").eq("mission_id", focusId).eq("stage", "pose").order("id").limit(1000);
+  if (!data?.length) return alert("No recorded poses for this mission yet.");
+  replaying = true; $("replay").textContent = "◼ replaying…";
+  const t0 = new Date(data[0].created_at).getTime();
+  const span = new Date(data[data.length - 1].created_at).getTime() - t0;
+  const k = span > 15000 ? 15000 / span : 1;
+  data.forEach((e) => setTimeout(() => setPose(e.data.target, e.data.joints_deg), (new Date(e.created_at).getTime() - t0) * k));
+  setTimeout(() => { replaying = false; $("replay").textContent = "▶ black box replay"; }, span * k + 400);
+};
+$("export").onclick = async () => {
+  const { data, error } = await sb.from("missions").select("id,created_at,author,prompt,status,plan,safety,summary,skill_used").not("plan", "is", null).order("id");
+  if (error) return alert(error.message);
+  const rows = data.map((m) => JSON.stringify({
+    episode_id: m.id, instruction: m.prompt, author: m.author, created_at: m.created_at,
+    outcome: m.status, executed_on_real_robot: m.status === "done", safety_score: m.safety?.score ?? null,
+    unsafe_moves_caught: m.safety?.caught_in_rehearsal ?? [], actions: m.plan, summary: m.summary,
+    robot: "the-robot-studio/so101", units: { joints: "degrees", duration: "seconds" },
+  }));
+  const blob = new Blob([rows.join("\n") + "\n"], { type: "application/jsonl" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `twingate-dataset-${rows.length}-episodes.jsonl`; a.click();
+};
+
+// ---------- E-STOP + crowd votes ----------
+let control = { estop: false, crowd_quorum: 3 };
+const votes = new Map(); // mission_id -> Map(voter -> approve)
+function renderControl() {
+  document.body.classList.toggle("estopped", !!control.estop);
+  $("estop").classList.toggle("on", !!control.estop);
+  $("estop").textContent = control.estop ? "RELEASE E-STOP" : "E-STOP";
+}
+function renderVotes() {
+  const m = missions.get(focusId);
+  const box = $("votes");
+  if (!m || !["awaiting_approval", "approved", "executing", "done", "rejected"].includes(m.status)) { box.style.display = "none"; return; }
+  const mv = [...(votes.get(m.id) || new Map()).values()];
+  const y = mv.filter(Boolean).length, n = mv.length - y, q = control.crowd_quorum || 3;
+  if (!mv.length && m.status !== "awaiting_approval") { box.style.display = "none"; return; }
+  box.style.display = "flex";
+  $("vy").style.width = `${Math.min(100, (y / q) * 100)}%`;
+  $("vn").style.width = `${Math.min(100 - Math.min(100, (y / q) * 100), (n / q) * 100)}%`;
+  $("vtxt").textContent = `👍 ${y} · 👎 ${n} · quorum ${q}`;
+}
+$("estop").onclick = async () => {
+  const on = !control.estop;
+  if (on) { control.estop = true; renderControl(); }
+  const ok = await rpc("operator_estop", { p_on: on });
+  if (!ok && on) { control.estop = false; renderControl(); }
+  if (on) say("Emergency stop.");
+};
+sb.from("control").select("*").eq("id", 1).single().then(({ data }) => { if (data) control = data; renderControl(); });
+sb.from("votes").select("*").order("created_at", { ascending: false }).limit(500).then(({ data }) => {
+  (data || []).forEach((v) => { if (!votes.has(v.mission_id)) votes.set(v.mission_id, new Map()); votes.get(v.mission_id).set(v.voter, v.approve); });
+  renderVotes();
+});
+sb.channel("ops")
+  .on("postgres_changes", { event: "*", schema: "public", table: "control" }, (p) => { control = p.new; renderControl(); renderVotes(); })
+  .on("postgres_changes", { event: "INSERT", schema: "public", table: "votes" }, (p) => {
+    const v = p.new; if (!votes.has(v.mission_id)) votes.set(v.mission_id, new Map()); votes.get(v.mission_id).set(v.voter, v.approve); renderVotes();
+  })
+  .subscribe();
 $("promote").onclick = () => decide("approved");
 $("reject").onclick = () => decide("rejected");
 addEventListener("keydown", (e) => {
   if (e.target && e.target.id === "rule") return;
   if (e.key === "Enter") decide("approved");
   if (e.key === "x" || e.key === "X") decide("rejected");
+  if (e.code === "Space") { e.preventDefault(); $("estop").click(); }
 });
 load();
 </script>

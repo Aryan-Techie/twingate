@@ -40,6 +40,16 @@
   .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
   .how { margin-top: 26px; font-size: 13px; color: var(--muted); line-height: 1.5; }
   .how b { color: var(--text); }
+  .estopbar { display: none; margin-top: 16px; background: #c9142c; color: #fff; font-weight: 700; padding: 12px 14px; border-radius: 12px; text-align: center; }
+  .vote { margin-top: 18px; display: grid; gap: 12px; }
+  .vcard { padding: 14px; border: 1px solid color-mix(in srgb, var(--live) 55%, transparent); background: color-mix(in srgb, var(--live) 7%, var(--panel)); }
+  .vcard .q { font-weight: 700; margin: 6px 0 4px; font-size: 17px; }
+  .vcard .s { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .vbtns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .vbtns button { padding: 14px; border-radius: 12px; font-weight: 700; font-size: 16px; }
+  .vyes { background: var(--ok); color: #04140a; } .vno { background: var(--panel-2); color: var(--text); border: 1px solid var(--line) !important; }
+  .vbtns button:disabled { opacity: .45; }
+  .vtally { margin-top: 10px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--line);
     padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
   .toast.show { opacity: 1; }
@@ -65,6 +75,8 @@
     <div class="chips" id="chips"></div>
   </section>
 
+  <div class="estopbar" id="estopbar">E-STOP engaged · robot halted by operator</div>
+  <section class="vote" id="vote"></section>
   <section class="mine" id="mine"></section>
 
   <p class="how"><b>How it works.</b> Your request lands in Supabase (Postgres + Realtime). A Claude agent turns it into motion and runs every move on the robot's digital twin. Unsafe moves get caught in simulation. Only a plan that passes the gate is promoted to the real robot.</p>
@@ -87,6 +99,11 @@ $("chips").onclick = (e) => { if (e.target.classList.contains("chip")) { $("prom
 $("name").value = store.get("tg_name", "");
 
 let mine = store.get("tg_missions", []);
+let voter = store.get("tg_voter", null);
+if (!voter) { voter = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()); store.set("tg_voter", voter); }
+const pending = new Map();   // awaiting_approval missions from everyone
+const tallies = new Map();   // mission_id -> {yes, no, mine}
+let quorum = 3;
 const missions = new Map();
 const STAGES = [["queued"], ["planning", "rehearsing"], ["awaiting_approval"], ["approved", "executing"], ["done"]];
 const LABELS = ["Queued", "Twin rehearsal", "Safety gate", "Real robot", "Done"];
@@ -123,6 +140,41 @@ function render() {
     </article>`;
   }).join("");
 }
+function renderVote() {
+  const rows = [...pending.values()].sort((a, b) => a.id - b.id).slice(0, 3);
+  $("vote").innerHTML = rows.map((m) => {
+    const t = tallies.get(m.id) || { yes: 0, no: 0, mine: null };
+    const voted = t.mine !== null;
+    return `<article class="panel vcard">
+      <span class="label">Crowd safety vote · mission #${m.id} · from ${esc(m.author)}</span>
+      <div class="q">Should the real robot do “${esc(m.prompt)}”?</div>
+      <div class="s">The twin rehearsed it: ${m.plan?.length || 0} moves, safety ${m.safety?.score ?? "?"}/100. ${esc(m.summary || "")}</div>
+      <div class="vbtns"><button class="vyes" data-id="${m.id}" data-v="1" ${voted ? "disabled" : ""}>👍 Do it</button><button class="vno" data-id="${m.id}" data-v="0" ${voted ? "disabled" : ""}>👎 No</button></div>
+      <div class="vtally">${t.yes} yes · ${t.no} no · ${quorum} needed${voted ? " · you voted" : ""}</div>
+    </article>`;
+  }).join("");
+}
+$("vote").onclick = async (e) => {
+  const b = e.target.closest("button[data-id]"); if (!b) return;
+  const id = +b.dataset.id, approve = b.dataset.v === "1";
+  const t = tallies.get(id) || { yes: 0, no: 0, mine: null };
+  t.mine = approve; tallies.set(id, t); renderVote();
+  const { error } = await sb.from("votes").insert({ mission_id: id, voter, approve });
+  if (error && !/duplicate/.test(error.message)) toast("Vote failed: " + error.message);
+  else toast(approve ? "Voted yes" : "Voted no");
+};
+async function loadVotes(ids) {
+  if (!ids.length) return;
+  const { data } = await sb.from("votes").select("*").in("mission_id", ids);
+  ids.forEach((id) => tallies.set(id, { yes: 0, no: 0, mine: null }));
+  (data || []).forEach(countVote);
+}
+function countVote(v) {
+  const t = tallies.get(v.mission_id) || { yes: 0, no: 0, mine: null };
+  if (v.approve) t.yes++; else t.no++;
+  if (v.voter === voter) t.mine = v.approve;
+  tallies.set(v.mission_id, t);
+}
 async function refreshQueue() {
   const { count } = await sb.from("missions").select("id", { count: "exact", head: true })
     .in("status", ["queued", "planning", "rehearsing", "awaiting_approval", "approved", "executing"]);
@@ -134,12 +186,28 @@ async function load() {
     (data || []).forEach((m) => missions.set(m.id, m));
   }
   render(); refreshQueue();
+  const { data: pend } = await sb.from("missions").select("*").eq("status", "awaiting_approval");
+  (pend || []).forEach((m) => pending.set(m.id, m));
+  await loadVotes([...pending.keys()]);
+  const { data: ctl } = await sb.from("control").select("*").eq("id", 1).single();
+  if (ctl) { quorum = ctl.crowd_quorum; $("estopbar").style.display = ctl.estop ? "block" : "none"; }
+  renderVote();
 }
 sb.channel("phone").on("postgres_changes", { event: "*", schema: "public", table: "missions" }, (p) => {
   const m = p.new;
   if (m && mine.includes(m.id)) { missions.set(m.id, m); render(); if (m.status === "done") toast("Your mission ran on the real robot!"); }
+  if (m) { if (m.status === "awaiting_approval") { pending.set(m.id, m); if (!tallies.has(m.id)) tallies.set(m.id, { yes: 0, no: 0, mine: null }); } else pending.delete(m.id); renderVote(); }
   refreshQueue();
-}).subscribe((s) => { $("conn").classList.toggle("on", s === "SUBSCRIBED"); });
+})
+.on("postgres_changes", { event: "INSERT", schema: "public", table: "votes" }, (p) => {
+  const v = p.new; const t = tallies.get(v.mission_id);
+  if (t && v.voter === voter && t.mine !== null) { /* own vote already counted optimistically below */ }
+  countVote(v); renderVote();
+})
+.on("postgres_changes", { event: "*", schema: "public", table: "control" }, (p) => {
+  quorum = p.new.crowd_quorum; $("estopbar").style.display = p.new.estop ? "block" : "none"; renderVote();
+})
+.subscribe((s) => { $("conn").classList.toggle("on", s === "SUBSCRIBED"); });
 
 $("send").onclick = async () => {
   const prompt = $("prompt").value.trim();
