@@ -104,6 +104,11 @@ function tick() {
       j.rot.quaternion.setFromAxisAngle(j.axis, j.cur);
     }
   }
+  // Ghost is only visible while the rehearsal differs from the real robot.
+  let diff = 0;
+  for (const [n, j] of Object.entries(robots.sim.joints)) diff = Math.max(diff, Math.abs(j.cur - (robots.live.joints[n]?.cur ?? 0)));
+  const target = Math.min(0.42, 0.06 + diff * 3);
+  ghostMat.opacity += (target - ghostMat.opacity) * 0.15;
   controls.autoRotate = performance.now() - lastPoseAt > 6000;
   controls.update();
   renderer.render(scene, camera);
