@@ -18,6 +18,8 @@
   .stat { padding: 8px 14px; min-width: 112px; }
   .stat .v { font-size: 24px; font-weight: 700; font-family: var(--mono); line-height: 1.1; }
   .stat.caught .v { color: var(--bad); } .stat.skills .v { color: var(--accent); }
+  #voice { color: var(--text); padding: 8px 12px; }
+  #voice.on { color: #041016; background: var(--sim); }
   .grid { display: grid; grid-template-columns: 290px 1fr 360px; gap: 14px; min-height: 0; }
   .col { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
   .pad { padding: 14px; }
@@ -81,6 +83,7 @@
   <div class="top">
     <div class="brand"><span class="logo"></span>TwinGate</div>
     <div class="motto">AI <b class="h">proposes</b> · digital twin <b class="s">rehearses</b> · real robot <b class="l">performs</b></div>
+    <button class="pill" id="voice" title="Robot speaks summaries">🔈 voice off</button>
     <div class="stats">
       <div class="panel stat"><div class="label">Missions</div><div class="v" id="sMissions">0</div></div>
       <div class="panel stat"><div class="label">Moves rehearsed</div><div class="v" id="sSteps">0</div></div>
@@ -95,6 +98,7 @@
         <div class="code" id="qr"></div>
         <div class="cta">Scan. Tell the robot what to do.</div>
         <div class="url" id="url"></div>
+        <div class="url">robot eyes: <span id="eyesUrl"></span></div>
       </section>
       <section class="panel list" id="queue"></section>
     </div>
@@ -153,6 +157,13 @@ const phoneUrl = TWINGATE.PUBLIC_URL || new URL("./", location.href).href;
 const qr = qrcode(0, "M"); qr.addData(phoneUrl); qr.make();
 $("qr").innerHTML = qr.createSvgTag({ cellSize: 6, margin: 0, scalable: true });
 $("url").textContent = phoneUrl.replace(/^https?:\/\//, "");
+$("eyesUrl").textContent = (phoneUrl + "eyes.html").replace(/^https?:\/\//, "");
+let voice = false;
+$("voice").onclick = () => { voice = !voice; $("voice").classList.toggle("on", voice); $("voice").textContent = voice ? "🔊 voice on" : "🔈 voice off"; if (voice) say("Twin Gate online."); };
+function say(t) {
+  if (!voice || !t || !window.speechSynthesis) return;
+  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.rate = 1.05; speechSynthesis.speak(u);
+}
 
 // ---------- state ----------
 const missions = new Map();
@@ -338,7 +349,16 @@ async function loadEvents(id) {
 
 sb.channel("control")
   .on("postgres_changes", { event: "*", schema: "public", table: "missions" }, async (p) => {
+    const prev = missions.get(p.new?.id)?.status;
     if (p.new?.id) missions.set(p.new.id, p.new);
+    const st = p.new?.status;
+    if (st && st !== prev) {
+      if (st === "awaiting_approval") say(`${p.new.summary || "Plan ready."} Rehearsal passed. Waiting for the operator.`);
+      else if (st === "executing") say("Promoted. Running on the real robot.");
+      else if (st === "done") say("Done.");
+      else if (st === "blocked") say("Blocked by the safety gate. The real robot never moved.");
+      else if (st === "rejected") say(p.new.summary || "Request declined.");
+    }
     const before = focusId; pickFocus();
     if (focusId !== before && focusId) { pose.sim = { cur: pose.sim.cur, goal: pose.sim.goal }; await loadEvents(focusId); }
     renderAll();
