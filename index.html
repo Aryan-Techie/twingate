@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>TwinGate</title>
+<meta name="theme-color" content="#07090d" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+<style>
+  main { max-width: 560px; margin: 0 auto; padding: 18px 16px 48px; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+  h1 { font-size: 30px; line-height: 1.08; letter-spacing: -0.03em; margin: 6px 0 8px; }
+  h1 .sim { color: var(--sim); } h1 .live { color: var(--live); }
+  .lead { color: var(--muted); margin: 0 0 18px; font-size: 15px; line-height: 1.45; }
+  .card { padding: 14px; }
+  input, textarea { width: 100%; background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 10px; padding: 12px; font: inherit; font-size: 16px; outline: none; }
+  input:focus, textarea:focus { border-color: var(--sim); }
+  textarea { resize: none; min-height: 92px; margin-top: 10px; }
+  .row { display: flex; gap: 10px; margin-top: 10px; }
+  .mic { width: 54px; flex: none; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); font-size: 22px; }
+  .mic.rec { background: var(--bad); border-color: var(--bad); }
+  .send { flex: 1; border-radius: 12px; padding: 15px; font-weight: 700; font-size: 17px; color: #041016;
+    background: linear-gradient(90deg, var(--sim), #7ee6ff); }
+  .send:disabled { opacity: .5; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 4px; }
+  .chip { background: transparent; border: 1px solid var(--line); color: var(--text); border-radius: 999px; padding: 7px 12px; font-size: 13px; }
+  .mine { margin-top: 22px; display: grid; gap: 12px; }
+  .m { padding: 14px; }
+  .m .p { font-weight: 600; margin: 6px 0 10px; }
+  .steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  .steps div { height: 5px; border-radius: 4px; background: var(--line); }
+  .steps div.on { background: var(--sim); }
+  .steps div.live.on { background: var(--live); }
+  .steps div.bad { background: var(--bad); }
+  .legend { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; font-size: 10px; color: var(--muted); margin-top: 5px; }
+  .sum { margin-top: 10px; font-size: 14px; color: var(--text); }
+  .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
+  .how { margin-top: 26px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .how b { color: var(--text); }
+  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--line);
+    padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand"><span class="logo"></span>TwinGate</div>
+    <span class="pill"><span class="dot" id="conn"></span><span id="qinfo">connecting</span></span>
+  </header>
+
+  <h1>Command the robot.<br /><span class="sim">Twin rehearses</span> first, <span class="live">real robot</span> second.</h1>
+  <p class="lead">Type or say what the robot on the table should do. An AI agent plans it, rehearses it on the Cyberwave digital twin, and a safety gate decides if it may touch the real world.</p>
+
+  <section class="panel card">
+    <input id="name" maxlength="24" placeholder="Your name" autocomplete="nickname" />
+    <textarea id="prompt" maxlength="300" placeholder="e.g. wave hello to the judges, then bow"></textarea>
+    <div class="row">
+      <button class="mic" id="mic" aria-label="Speak">🎙</button>
+      <button class="send" id="send">Send to robot</button>
+    </div>
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <section class="mine" id="mine"></section>
+
+  <p class="how"><b>How it works.</b> Your request lands in Supabase (Postgres + Realtime). A Claude agent turns it into motion and runs every move on the robot's digital twin. Unsafe moves get caught in simulation. Only a plan that passes the gate is promoted to the real robot.</p>
+</main>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script>
+const sb = supabase.createClient(TWINGATE.SUPABASE_URL, TWINGATE.SUPABASE_ANON_KEY);
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+const IDEAS = ["Wave hello to the judges", "Do a little victory dance", "Nod yes three times", "Bow politely",
+  "Look around and tell me what you see", "Point at the door, then come home", "Act surprised", "Pick a direction and stretch"];
+$("chips").innerHTML = IDEAS.map((t) => `<button class="chip">${t}</button>`).join("");
+$("chips").onclick = (e) => { if (e.target.classList.contains("chip")) { $("prompt").value = e.target.textContent; $("prompt").focus(); } };
+$("name").value = store.get("tg_name", "");
+
+let mine = store.get("tg_missions", []);
+const missions = new Map();
+const STAGES = [["queued"], ["planning", "rehearsing"], ["awaiting_approval"], ["approved", "executing"], ["done"]];
+const LABELS = ["Queued", "Twin rehearsal", "Safety gate", "Real robot", "Done"];
+const BAD = ["blocked", "rejected", "failed"];
+
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2200); }
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function stageIndex(st) {
+  if (BAD.includes(st)) return -1;
+  return STAGES.findIndex((g) => g.includes(st));
+}
+function render() {
+  const rows = mine.map((id) => missions.get(id)).filter(Boolean).sort((a, b) => b.id - a.id);
+  $("mine").innerHTML = rows.map((m) => {
+    const idx = stageIndex(m.status);
+    const bad = idx === -1;
+    const reached = bad ? (m.safety ? 2 : 1) : idx;
+    const bars = LABELS.map((_, i) => {
+      const cls = [i >= 3 ? "live" : "", i <= reached ? "on" : "", bad && i === reached ? "bad" : ""].join(" ");
+      return `<div class="${cls}"></div>`;
+    }).join("");
+    const pending = ["queued", "planning", "rehearsing", "approved", "executing"].includes(m.status);
+    return `<article class="panel m">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="label">Mission #${m.id}</span>
+        <span class="pill st-${m.status} ${pending ? "pulse" : ""}">${esc(m.status.replace("_", " "))}</span>
+      </div>
+      <div class="p">“${esc(m.prompt)}”</div>
+      <div class="steps">${bars}</div>
+      <div class="legend">${LABELS.map((l) => `<span>${l}</span>`).join("")}</div>
+      ${m.summary ? `<div class="sum">🤖 ${esc(m.summary)}</div>` : ""}
+      ${m.safety && !m.safety.passed && m.status === "blocked" ? `<div class="err">Safety gate blocked it: ${esc((m.safety.violations || [])[0] || "failed checks")}</div>` : ""}
+      ${m.error ? `<div class="err">${esc(m.error)}</div>` : ""}
+    </article>`;
+  }).join("");
+}
+async function refreshQueue() {
+  const { count } = await sb.from("missions").select("id", { count: "exact", head: true })
+    .in("status", ["queued", "planning", "rehearsing", "awaiting_approval", "approved", "executing"]);
+  $("qinfo").textContent = count ? `${count} in queue` : "robot ready";
+}
+async function load() {
+  if (mine.length) {
+    const { data } = await sb.from("missions").select("*").in("id", mine);
+    (data || []).forEach((m) => missions.set(m.id, m));
+  }
+  render(); refreshQueue();
+}
+sb.channel("phone").on("postgres_changes", { event: "*", schema: "public", table: "missions" }, (p) => {
+  const m = p.new;
+  if (m && mine.includes(m.id)) { missions.set(m.id, m); render(); if (m.status === "done") toast("Your mission ran on the real robot!"); }
+  refreshQueue();
+}).subscribe((s) => { $("conn").classList.toggle("on", s === "SUBSCRIBED"); });
+
+$("send").onclick = async () => {
+  const prompt = $("prompt").value.trim();
+  const author = $("name").value.trim() || "anon";
+  if (!prompt) return toast("Tell the robot something first");
+  store.set("tg_name", author);
+  $("send").disabled = true;
+  const { data, error } = await sb.from("missions").insert({ prompt, author }).select().single();
+  $("send").disabled = false;
+  if (error) return toast("Could not send: " + error.message);
+  mine = [data.id, ...mine].slice(0, 10); store.set("tg_missions", mine);
+  missions.set(data.id, data); $("prompt").value = ""; render(); toast("Sent! Watch the big screen.");
+};
+
+// Voice input (Chrome / Safari)
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) $("mic").style.display = "none";
+else {
+  let rec = null;
+  $("mic").onclick = () => {
+    if (rec) { rec.stop(); return; }
+    rec = new SR(); rec.lang = "en-IN"; rec.interimResults = true;
+    $("mic").classList.add("rec");
+    rec.onresult = (e) => { $("prompt").value = Array.from(e.results).map((r) => r[0].transcript).join(" "); };
+    rec.onend = () => { $("mic").classList.remove("rec"); rec = null; };
+    rec.start();
+  };
+}
+load();
+</script>
+</body>
+</html>
