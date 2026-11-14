@@ -22,6 +22,7 @@
   .row { display: flex; gap: 10px; margin-top: 10px; }
   .mic { width: 54px; flex: none; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); font-size: 22px; }
   .mic.rec { background: var(--bad); border-color: var(--bad); }
+  .mic.lang { font-size: 14px; font-weight: 700; }
   .send { flex: 1; border-radius: 12px; padding: 15px; font-weight: 700; font-size: 17px; color: #041016;
     background: linear-gradient(90deg, var(--sim), #7ee6ff); }
   .send:disabled { opacity: .5; }
@@ -85,6 +86,7 @@
     <textarea id="prompt" maxlength="300" placeholder="e.g. wave hello to the judges, then bow"></textarea>
     <div class="row">
       <button class="mic" id="mic" aria-label="Speak">🎙</button>
+      <button class="mic lang" id="lang" aria-label="Voice language">EN</button>
       <button class="send" id="send">Send to robot</button>
     </div>
     <div class="chips" id="chips"></div>
@@ -117,7 +119,7 @@ const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
-const IDEAS = ["Wave hello to the judges", "Do a little victory dance", "Nod yes three times", "Bow politely",
+const IDEAS = ["हाथ हिलाकर नमस्ते करो", "Wave hello to the judges", "Do a little victory dance", "Nod yes three times", "Bow politely",
   "Look around and tell me what you see", "Point at the door, then come home", "Act surprised", "Pick a direction and stretch"];
 $("chips").innerHTML = IDEAS.map((t) => `<button class="chip">${t}</button>`).join("");
 $("chips").onclick = (e) => { if (e.target.classList.contains("chip")) { $("prompt").value = e.target.textContent; $("prompt").focus(); } };
@@ -247,14 +249,18 @@ $("send").onclick = async () => {
   missions.set(data.id, data); $("prompt").value = ""; render(); toast("Sent! Watch the big screen.");
 };
 
-// Voice input (Chrome / Safari)
+// Voice input (Chrome / Safari), English or Hindi
+let voiceLang = store.get("tg_lang", "en-IN");
+const setLang = () => { $("lang").textContent = voiceLang === "hi-IN" ? "हिं" : "EN"; };
+setLang();
+$("lang").onclick = () => { voiceLang = voiceLang === "hi-IN" ? "en-IN" : "hi-IN"; store.set("tg_lang", voiceLang); setLang(); toast(voiceLang === "hi-IN" ? "Speak in Hindi" : "Speak in English"); };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (!SR) $("mic").style.display = "none";
 else {
   let rec = null;
   $("mic").onclick = () => {
     if (rec) { rec.stop(); return; }
-    rec = new SR(); rec.lang = "en-IN"; rec.interimResults = true;
+    rec = new SR(); rec.lang = voiceLang; rec.interimResults = true;
     $("mic").classList.add("rec");
     rec.onresult = (e) => { $("prompt").value = Array.from(e.results).map((r) => r[0].transcript).join(" "); };
     rec.onend = () => { $("mic").classList.remove("rec"); rec = null; };
@@ -262,7 +268,14 @@ else {
   };
 }
 // ---------- robot replies out loud on your phone ----------
-function speak(t) { try { if (!t || !window.speechSynthesis) return; speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(t)); } catch {} }
+function speak(t) {
+  try {
+    if (!t || !window.speechSynthesis) return;
+    speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t);
+    if (/[\u0900-\u097F]/.test(t)) u.lang = "hi-IN";
+    speechSynthesis.speak(u);
+  } catch {}
+}
 
 // ---------- teach mode ----------
 const ALIASES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"];

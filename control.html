@@ -220,7 +220,9 @@ let voice = false;
 $("voice").onclick = () => { voice = !voice; $("voice").classList.toggle("on", voice); $("voice").textContent = voice ? "🔊 voice on" : "🔈 voice off"; if (voice) say("Twin Gate online."); };
 function say(t) {
   if (!voice || !t || !window.speechSynthesis) return;
-  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.rate = 1.05; speechSynthesis.speak(u);
+  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.rate = 1.05;
+  if (/[\u0900-\u097F]/.test(t)) u.lang = "hi-IN";
+  speechSynthesis.speak(u);
 }
 
 // ---------- state ----------
